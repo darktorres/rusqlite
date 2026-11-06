@@ -37,7 +37,7 @@
 //! want different storage for datetimes, you can use a newtype.
 #![cfg_attr(
     feature = "time",
-    doc = r"
+    doc = r##"
 For example, to store datetimes as `i64`s counting the number of seconds since
 the Unix epoch:
 
@@ -64,7 +64,7 @@ impl ToSql for DateTimeSql {
 }
 ```
 
-"
+"##
 )]
 //! [`ToSql`] and [`FromSql`] are also implemented for `Option<T>` where `T`
 //! implements [`ToSql`] or [`FromSql`] for the cases where you want to know if
@@ -135,13 +135,10 @@ impl fmt::Display for Type {
     }
 }
 
-#[cfg(all(test, not(miri)))]
+#[cfg(test)]
 mod test {
-    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    use wasm_bindgen_test::wasm_bindgen_test as test;
-
     use super::Value;
-    use crate::{Connection, Error, Result, Statement, params};
+    use crate::{params, Connection, Error, Result, Statement};
     use std::ffi::{c_double, c_int};
 
     fn checked_memory_handle() -> Result<Connection> {
@@ -386,8 +383,9 @@ mod test {
     }
 
     #[test]
+    #[expect(clippy::float_cmp)]
     fn test_numeric_conversions() -> Result<()> {
-        // Test what happens when we store a f32 and retrieve an i32 etc.
+        // Test what happens when we store an f32 and retrieve an i32 etc.
         let db = Connection::open_in_memory()?;
         db.execute_batch("CREATE TABLE foo (x)")?;
 
@@ -414,18 +412,12 @@ mod test {
         test_conversion!(db_etc, 200u8, u8, expect 200u8);
         test_conversion!(db_etc, 100u16, i8, expect 100i8);
         test_conversion!(db_etc, 200u16, u8, expect 200u8);
-        #[cfg(feature = "fallible_uint")]
         test_conversion!(db_etc, u32::MAX, u64, expect u32::MAX as u64);
-
         test_conversion!(db_etc, i64::MIN, i64, expect i64::MIN);
         test_conversion!(db_etc, i64::MAX, i64, expect i64::MAX);
-        #[cfg(feature = "fallible_uint")]
         test_conversion!(db_etc, i64::MAX, u64, expect i64::MAX as u64);
-        #[cfg(feature = "fallible_uint")]
         test_conversion!(db_etc, 100usize, usize, expect 100usize);
-        #[cfg(feature = "fallible_uint")]
         test_conversion!(db_etc, 100u64, u64, expect 100u64);
-        #[cfg(feature = "fallible_uint")]
         test_conversion!(db_etc, i64::MAX as u64, u64, expect i64::MAX as u64);
 
         // Out-of-range integral conversions.
@@ -433,13 +425,9 @@ mod test {
         test_conversion!(db_etc, 400u16, i8, expect_from_sql_error);
         test_conversion!(db_etc, 400u16, u8, expect_from_sql_error);
         test_conversion!(db_etc, -1i8, u8, expect_from_sql_error);
-        #[cfg(feature = "fallible_uint")]
         test_conversion!(db_etc, i64::MIN, u64, expect_from_sql_error);
-        #[cfg(feature = "fallible_uint")]
         test_conversion!(db_etc, u64::MAX, i64, expect_to_sql_error);
-        #[cfg(feature = "fallible_uint")]
         test_conversion!(db_etc, u64::MAX, u64, expect_to_sql_error);
-        #[cfg(feature = "fallible_uint")]
         test_conversion!(db_etc, i64::MAX as u64 + 1, u64, expect_to_sql_error);
 
         // FromSql integer to float, always works.

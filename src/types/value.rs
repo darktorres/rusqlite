@@ -29,7 +29,7 @@ impl From<Null> for Value {
 impl From<bool> for Value {
     #[inline]
     fn from(i: bool) -> Self {
-        Self::Integer(i64::from(i))
+        Self::Integer(i as i64)
     }
 }
 
@@ -141,9 +141,6 @@ impl Value {
 
 #[cfg(test)]
 mod test {
-    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    use wasm_bindgen_test::wasm_bindgen_test as test;
-
     use super::Value;
     use crate::types::Type;
 

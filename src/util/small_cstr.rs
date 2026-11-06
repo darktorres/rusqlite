@@ -1,4 +1,4 @@
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::ffi::{CStr, CString, NulError};
 
 /// Similar to `std::ffi::CString`, but avoids heap allocating if the string is
@@ -116,9 +116,6 @@ impl std::borrow::Borrow<str> for SmallCString {
 
 #[cfg(test)]
 mod test {
-    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    use wasm_bindgen_test::wasm_bindgen_test as test;
-
     use super::*;
 
     #[test]

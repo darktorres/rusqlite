@@ -1,27 +1,20 @@
-//! Port of C [vtablog](https://sqlite.org/src/file/ext/misc/vtablog.c)
-use std::borrow::Cow;
-use std::ffi::{CStr, CString, c_int};
+//! Port of C [vtablog](http://www.sqlite.org/cgi/src/finfo?name=ext/misc/vtablog.c)
+use std::ffi::c_int;
 use std::marker::PhantomData;
-use std::str::FromStr as _;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fallible_iterator::FallibleIterator as _;
-
-use crate::types::Type;
 use crate::vtab::{
-    Context, CreateVTab, Filters, IndexInfo, Inserts, Module, TransactionVTab, UpdateVTab, Updates,
-    VTab, VTabConnection, VTabCursor, VTabKind,
+    update_module, Context, CreateVTab, Filters, IndexInfo, Inserts, UpdateVTab, Updates, VTab,
+    VTabConnection, VTabCursor, VTabKind,
 };
+use crate::{ffi, ValueRef};
 use crate::{Connection, Error, Result};
-use crate::{ValueRef, ffi};
-
-const MODULE_NAME: &CStr = c"vtablog";
 
 /// Register the "vtablog" module.
 pub fn load_module(conn: &Connection) -> Result<()> {
-    const MODULE: Module<VTabLog> = Module::update_module_with_tx();
     let aux: Option<()> = None;
-    conn.create_module(MODULE_NAME, &MODULE, aux)
+    conn.create_module(c"vtablog", update_module::<VTabLog>(), aux)
 }
 
 /// An instance of the vtablog virtual table
@@ -42,31 +35,24 @@ struct VTabLog {
 impl VTabLog {
     fn connect_create(
         db: &mut VTabConnection,
-        aux: Option<&()>,
-        module_name: &[u8],
-        database_name: &[u8],
-        table_name: &[u8],
+        _: Option<&()>,
         args: &[&[u8]],
         is_create: bool,
-    ) -> Result<(Cow<'static, CStr>, Self)> {
-        debug_assert_eq!(aux, None);
-        debug_assert_eq!(module_name, MODULE_NAME.to_bytes());
+    ) -> Result<(String, Self)> {
         static N_INST: AtomicUsize = AtomicUsize::new(1);
         let i_inst = N_INST.fetch_add(1, Ordering::SeqCst);
         println!(
-            "VTabLog::{}(tab={}, database_name={}, table_name={}, args={:?}):",
+            "VTabLog::{}(tab={}, args={:?}):",
             if is_create { "create" } else { "connect" },
             i_inst,
-            str::from_utf8(database_name)?,
-            str::from_utf8(table_name)?,
             args.iter().map(|b| str::from_utf8(b)).collect::<Vec<_>>(),
         );
         let mut schema = None;
         let mut n_row = None;
 
+        let args = &args[3..];
         for c_slice in args {
             let (param, value) = super::parameter(c_slice)?;
-            let value = value.as_ref();
             match param {
                 "schema" => {
                     if schema.is_some() {
@@ -74,7 +60,7 @@ impl VTabLog {
                             "more than one '{param}' parameter"
                         )));
                     }
-                    schema = Some(CString::new(value)?);
+                    schema = Some(value.to_owned())
                 }
                 "rows" => {
                     if n_row.is_some() {
@@ -83,7 +69,7 @@ impl VTabLog {
                         )));
                     }
                     if let Ok(n) = i64::from_str(value) {
-                        n_row = Some(n);
+                        n_row = Some(n)
                     }
                 }
                 _ => {
@@ -103,7 +89,7 @@ impl VTabLog {
             i_inst,
             n_cursor: 0,
         };
-        Ok((Cow::Owned(schema.unwrap()), vtab))
+        Ok((schema.unwrap(), vtab))
     }
 }
 
@@ -120,15 +106,12 @@ unsafe impl<'vtab> VTab<'vtab> for VTabLog {
     fn connect(
         db: &mut VTabConnection,
         aux: Option<&Self::Aux>,
-        module_name: &[u8],
-        database_name: &[u8],
-        table_name: &[u8],
         args: &[&[u8]],
-    ) -> Result<(Cow<'static, CStr>, Self)> {
-        Self::connect_create(db, aux, module_name, database_name, table_name, args, false)
+    ) -> Result<(String, Self)> {
+        Self::connect_create(db, aux, args, false)
     }
 
-    fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
+    fn best_index(&self, info: &mut IndexInfo) -> Result<()> {
         println!(
             "VTabLog::best_index({}, num_of_order_by: {}, col_used: {}, distinct: {:?})",
             self.i_inst,
@@ -136,30 +119,11 @@ unsafe impl<'vtab> VTab<'vtab> for VTabLog {
             info.col_used(),
             info.distinct()
         );
-        let mut in_constraint = None;
-        for (i, constraint) in info.constraints().enumerate() {
-            println!(
-                "  constraint[{}]: col={}, usable={}, op={:?}, rhs={:?}, in={:?}",
-                i,
-                constraint.column(),
-                constraint.is_usable(),
-                constraint.operator(),
-                info.rhs_value(i),
-                info.is_in_constraint(i),
-            );
-            if info.is_in_constraint(i)? {
-                in_constraint = Some(i);
-            }
-        }
         info.set_estimated_cost(500.);
         info.set_estimated_rows(500);
         info.set_idx_str("idx");
         info.set_idx_cstr(c"idx");
-        if let Some(idx) = in_constraint {
-            info.set_in_constraint(idx, true)?;
-            info.constraint_usage(idx).set_argv_index(1);
-        }
-        Ok(true)
+        Ok(())
     }
 
     fn open(&'vtab mut self) -> Result<Self::Cursor> {
@@ -183,12 +147,9 @@ impl CreateVTab<'_> for VTabLog {
     fn create(
         db: &mut VTabConnection,
         aux: Option<&Self::Aux>,
-        module_name: &[u8],
-        database_name: &[u8],
-        table_name: &[u8],
         args: &[&[u8]],
-    ) -> Result<(Cow<'static, CStr>, Self)> {
-        Self::connect_create(db, aux, module_name, database_name, table_name, args, true)
+    ) -> Result<(String, Self)> {
+        Self::connect_create(db, aux, args, true)
     }
 
     fn destroy(&self) -> Result<()> {
@@ -223,28 +184,6 @@ impl UpdateVTab<'_> for VTabLog {
                 .map(|(i, v)| (v, args.no_change(i)))
                 .collect::<Vec<(ValueRef<'_>, bool)>>()
         );
-        Ok(())
-    }
-}
-
-impl TransactionVTab<'_> for VTabLog {
-    fn begin(&mut self) -> Result<()> {
-        println!("VTabLog::begin({})", self.i_inst);
-        Ok(())
-    }
-
-    fn sync(&mut self) -> Result<()> {
-        println!("VTabLog::sync({})", self.i_inst);
-        Ok(())
-    }
-
-    fn commit(&mut self) -> Result<()> {
-        println!("VTabLog::commit({})", self.i_inst);
-        Ok(())
-    }
-
-    fn rollback(&mut self) -> Result<()> {
-        println!("VTabLog::rollback({})", self.i_inst);
         Ok(())
     }
 }
@@ -285,15 +224,6 @@ unsafe impl VTabCursor for VTabLogCursor<'_> {
             self.i_cursor,
             args.len()
         );
-        for (i, arg) in args.iter().enumerate() {
-            if arg.data_type() == Type::Null {
-                println!(
-                    " in_values[{}]: {:?}",
-                    i,
-                    args.in_values(i)?.collect::<Vec<ValueRef>>()
-                );
-            }
-        }
         self.row_id = 0;
         Ok(())
     }
@@ -347,11 +277,6 @@ unsafe impl VTabCursor for VTabLogCursor<'_> {
             i,
             value,
         );
-        if i == 0 {
-            println!("  db busy: {:?}", unsafe {
-                ctx.get_connection().map(|c| c.is_busy())
-            });
-        }
         ctx.set_result(&value)
     }
 
@@ -368,9 +293,6 @@ unsafe impl VTabCursor for VTabLogCursor<'_> {
 
 #[cfg(test)]
 mod test {
-    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    use wasm_bindgen_test::wasm_bindgen_test as test;
-
     use crate::{Connection, Result};
     #[test]
     fn test_module() -> Result<()> {
@@ -380,7 +302,7 @@ mod test {
         db.execute_batch(
             "CREATE VIRTUAL TABLE temp.log USING vtablog(
                     schema='CREATE TABLE x(a,b,c)',
-                    rows=3
+                    rows=25
                 );",
         )?;
         let mut stmt = db.prepare("SELECT * FROM log;")?;
@@ -395,8 +317,6 @@ mod test {
             "UPDATE log SET b = ?1, c = ?2 WHERE a = ?3",
             ["bn", "cn", "a1"],
         )?;
-        db.query_one("SELECT b, c FROM log WHERE a = 'a1'", [], |_| Ok(0))?;
-        db.execute("UPDATE log SET b = '' WHERE a IN (?1, ?2)", ["a1", "a2"])?;
         Ok(())
     }
 }

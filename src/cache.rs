@@ -140,14 +140,19 @@ impl StatementCache {
     ) -> Result<CachedStatement<'conn>> {
         let trimmed = sql.trim();
         let mut cache = self.0.borrow_mut();
+        // photo-gallery: the key is set only on a miss. A statement found in the cache still
+        // carries the key it was cached under (`cache_stmt` inserts a clone of it), so setting
+        // it again copied the SQL into a new `Arc<str>` on every hit.
         let stmt = match cache.remove(trimmed) {
             Some(raw_stmt) => Ok(Statement::new(conn, raw_stmt)),
-            None => conn.prepare_with_flags(trimmed, PrepFlags::SQLITE_PREPARE_PERSISTENT),
+            None => conn
+                .prepare_with_flags(trimmed, PrepFlags::SQLITE_PREPARE_PERSISTENT)
+                .map(|mut stmt| {
+                    stmt.stmt.set_statement_cache_key(trimmed);
+                    stmt
+                }),
         };
-        stmt.map(|mut stmt| {
-            stmt.stmt.set_statement_cache_key(trimmed);
-            CachedStatement::new(stmt, self)
-        })
+        stmt.map(|stmt| CachedStatement::new(stmt, self))
     }
 
     // Return a statement to the cache.
@@ -174,14 +179,11 @@ impl StatementCache {
     }
 }
 
-#[cfg(all(test, not(miri)))]
+#[cfg(test)]
 mod test {
-    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    use wasm_bindgen_test::wasm_bindgen_test as test;
-
     use super::StatementCache;
     use crate::{Connection, Result};
-    use fallible_iterator::FallibleIterator as _;
+    use fallible_iterator::FallibleIterator;
 
     impl StatementCache {
         fn clear(&self) {
@@ -195,6 +197,22 @@ mod test {
         fn capacity(&self) -> usize {
             self.0.borrow().capacity()
         }
+    }
+
+    // photo-gallery: a hit reuses the key the statement was cached under.
+    #[test]
+    fn test_cache_hit_keeps_key() -> Result<()> {
+        let db = Connection::open_in_memory()?;
+        let sql = "PRAGMA schema_version";
+        let key = |stmt: super::CachedStatement<'_>| {
+            let raw = &stmt.stmt.as_ref().unwrap().stmt;
+            raw.statement_cache_key().unwrap()
+        };
+        let first = key(db.prepare_cached(sql)?);
+        for _ in 0..3 {
+            assert!(std::sync::Arc::ptr_eq(&first, &key(db.prepare_cached(sql)?)));
+        }
+        Ok(())
     }
 
     #[test]
