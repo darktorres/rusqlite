@@ -32,6 +32,9 @@ min_sqlite_version_3_45_3 = ["pkg-config", "vcpkg"]
 # Bundle only the bindings file. Note that this does nothing if
 # `buildtime_bindgen` is enabled.
 bundled_bindings = []
+# The photo gallery's defaults for the bundled build: SQLite without its process-wide memory statistics, and a
+# lookaside of 1200 x 200 (see build.rs). Needs `bundled`; `LIBSQLITE3_FLAGS` still overrides it.
+photo-gallery-defaults = []
 # Used to generate a cdylib
 loadable_extension = ["prettyplease", "quote", "syn"]
 # SQLITE_ENABLE_UNLOCK_NOTIFY
