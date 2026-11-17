@@ -337,6 +337,14 @@ mod build_bundled {
         }
         println!("cargo:rerun-if-env-changed=SQLITE_MAX_COLUMN");
 
+        // The `photo-gallery-defaults` feature: no process-wide memory statistics (every allocation takes one global
+        // mutex while they are on), and a lookaside of 200 slots of 1200 bytes. They come before `LIBSQLITE3_FLAGS`, so
+        // that variable can still override them.
+        if env::var_os("CARGO_FEATURE_PHOTO_GALLERY_DEFAULTS").is_some() {
+            cfg.flag("-DSQLITE_DEFAULT_MEMSTATUS=0");
+            cfg.flag("-DSQLITE_DEFAULT_LOOKASIDE=1200,200");
+        }
+
         if let Ok(extras) = env::var("LIBSQLITE3_FLAGS") {
             for extra in extras.split_whitespace() {
                 if extra.starts_with("-D") || extra.starts_with("-U") {
